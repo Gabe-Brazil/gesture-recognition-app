@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "commands": [
+    { "name": "NEXT", "description": "Go to the next slide" },
+    { "name": "PREV", "description": "Go to the previous slide" },
+    { "name": "FIRST", "description": "Jump to the first slide" },
+    { "name": "LAST", "description": "Jump to the last slide" },
+    { "name": "BLACK_SCREEN", "description": "Toggle a black screen" }
+  ]
+}

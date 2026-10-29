@@ -1,0 +1,7 @@
+{
+  "NEXT": ["right"],
+  "PREV": ["left"],
+  "FIRST": ["home"],
+  "LAST": ["end"],
+  "BLACK_SCREEN": ["b"]
+}

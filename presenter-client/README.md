@@ -1,0 +1,1 @@
+`command_keys.json` maps a command that can be received to a key. New commands added to /shared should also be added to command_keys

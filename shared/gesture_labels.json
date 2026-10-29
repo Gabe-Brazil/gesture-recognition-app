@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "labels": [
+    { "id": 0, "name": "none" },
+    { "id": 1, "name": "thumbs_up" },
+    { "id": 2, "name": "thumbs_down" },
+    { "id": 3, "name": "swipe_right" },
+    { "id": 4, "name": "swipe_left" }
+  ]
+}
