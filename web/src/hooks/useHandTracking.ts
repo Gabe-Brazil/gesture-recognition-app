@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DrawingUtils, FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
+import { normalizeHand, toPts, type Handedness, type Pt } from '../../../shared/normalizeHand'
 
 // Match the runtime version pinned in package-lock.json.
 const wasmUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.0/wasm'
 const modelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+
+
+export interface HandFrame {
+  raw: Pt[]                 // copied x/y/z for the 21 landmarks (image-space, 0-1)
+  handedness: Handedness
+  features: number[] | null // normalizeHand output (63 numbers), null if unusable
+}
+
+export interface FrameData {
+  t: number                 // timestamp from requestAnimationFrame (ms)
+  aspect: number            // video.videoWidth / video.videoHeight
+  hands: HandFrame[]
+}
+
 function describeError(error: unknown): string {
   if (error instanceof DOMException) {
     if (error.name === 'NotAllowedError') return 'Camera access was denied. Allow camera access in your browser settings, then try again.'
@@ -12,13 +27,18 @@ function describeError(error: unknown): string {
   }
   return 'Could not start hand tracking. Check your camera and internet connection, then try again. The model needs to download on first use.'
 }
-export function useHandTracking() {
+
+export function useHandTracking(onFrame?: (frame: FrameData) => void) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const session = useRef(0)
   const streamRef = useRef<MediaStream | null>(null)
   const modelRef = useRef<HandLandmarker | null>(null)
   const frameRef = useRef(0)
+  // Keep the latest callback in a ref: tick() is created once per start(), so it
+  // would otherwise keep calling whatever callback existed at that moment.
+  const onFrameRef = useRef(onFrame)
+  onFrameRef.current = onFrame
   const [status, setStatus] = useState<'idle' | 'loading' | 'live'>('idle')
   const [error, setError] = useState('')
   const [hands, setHands] = useState(0)
@@ -80,6 +100,37 @@ export function useHandTracking() {
               drawing.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, { color: '#c5f277', lineWidth: 3 })
               drawing.drawLandmarks(landmarks, { color: '#ffffff', fillColor: '#567c30', radius: 3, lineWidth: 1 })
             }
+
+            // Emit raw + normalized landmarks to the consumer (recorder / classifier).
+            // Runs after drawing so a consumer problem never blocks the overlay, and has its
+            // own try/catch so it can't trigger the camera-stopping catch below.
+            const cb = onFrameRef.current
+            if (cb) {
+              try {
+                const aspect = video.videoWidth / video.videoHeight
+                // The property is `handedness` in some versions and `handednesses` in others.
+                const r = result as unknown as {
+                  handedness?: { categoryName: string }[][]
+                  handednesses?: { categoryName: string }[][]
+                }
+                const labels = r.handedness ?? r.handednesses ?? []
+                cb({
+                  t: now,
+                  aspect,
+                  hands: result.landmarks.flatMap((lm, i) => {
+                    const label = labels[i]?.[0]?.categoryName
+                    if (label !== 'Left' && label !== 'Right') return [] // skip hands with no usable label
+                    const raw = toPts(lm)
+                    return [{
+                      raw,
+                      handedness: label,
+                      features: normalizeHand(raw, aspect, label),
+                    }]
+                  }),
+                })
+              } catch (consumerError) { console.error('onFrame callback failed:', consumerError) }
+            }
+
             frames += 1
             if (now - lastReport >= 500) { setHands(result.landmarks.length); setFps(Math.round(frames * 1000 / (now - lastReport))); frames = 0; lastReport = now }
           }

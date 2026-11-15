@@ -17,7 +17,9 @@ const slides = [
 const labels: Record<string, string> = { NEXT: 'Next slide →', PREV: '← Previous slide', FIRST: '⇤ First slide', LAST: 'Last slide ⇥', BLACK_SCREEN: '◐ Toggle black screen' }
 
 export default function App() {
-  const { videoRef, canvasRef, status, error, hands, fps, start, stop } = useHandTracking()
+  const { videoRef, canvasRef, status, error, hands, fps, start, stop } = useHandTracking();
+// hand.features is a 63-number vector, normalized for position, scale, and handedness. See shared/normalizeHand.ts for details.
+
   const [logs, setLogs] = useState<Message[]>([])
   const [slide, setSlide] = useState(0)
   const [black, setBlack] = useState(false)
