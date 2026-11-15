@@ -1,17 +1,19 @@
 import argparse
+import asyncio
 import json
 import logging
 import os
 import sys
-import threading
 from pathlib import Path
 
-from ably.sync import AblyRealtime
+from ably import AblyRealtime
 from dotenv import load_dotenv
 from pynput.keyboard import Controller, GlobalHotKeys, Key
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
+CONNECT_TIMEOUT_SECONDS = 15
 
 
 def parse_arguments():
@@ -132,7 +134,7 @@ def make_message_handler(command_map: dict[str, list[str]], dry_run: bool):
     return handle_message
 
 
-def main() -> None:
+async def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     load_dotenv(repo_root / ".env")
 
@@ -147,38 +149,54 @@ def main() -> None:
     channel_name = load_channel_name(channel_config)
     command_map = load_command_map(args.command_map)
 
-    client = AblyRealtime(args.api_key)
-    channel = client.channels.get(channel_name)
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
     hotkeys = None
-    stop_event = threading.Event()
+    channel = None
 
+    # The realtime client must be created inside the running event loop
+    client = AblyRealtime(args.api_key)
     try:
-        channel.subscribe(make_message_handler(command_map, args.dry_run))
-        logger.info("Connected to Ably channel '%s'.", channel_name)
+        try:
+            await asyncio.wait_for(
+                client.connection.once_async("connected"),
+                timeout=CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"Could not connect to Ably within {CONNECT_TIMEOUT_SECONDS} seconds. "
+                "Check your API key and internet connection."
+            )
+        logger.info("Connected to Ably.")
 
+        channel = client.channels.get(channel_name)
+        await channel.subscribe(make_message_handler(command_map, args.dry_run))
+        logger.info("Subscribed to channel '%s'.", channel_name)
+
+        # pynput runs hotkeys on its own thread, so set the event thread-safely
         hotkeys = GlobalHotKeys(
-            {"<ctrl>+<alt>+q": lambda: stop_event.set()}
+            {"<ctrl>+<alt>+q": lambda: loop.call_soon_threadsafe(stop_event.set)}
         )
         hotkeys.start()
         logger.info("Press Ctrl+Alt+Q to quit.")
 
-        while not stop_event.wait(0.5):
-            pass
-    except KeyboardInterrupt:
-        logger.info("Interrupted; shutting down presenter client.")
+        await stop_event.wait()
     finally:
         logger.info("Disconnecting from Ably.")
         if hotkeys is not None:
             hotkeys.stop()
         try:
-            channel.unsubscribe()
+            if channel is not None:
+                channel.unsubscribe()
         finally:
-            client.close()
+            await client.close()
 
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Interrupted; shutting down presenter client.")
     except SystemExit:
         raise
     except Exception:

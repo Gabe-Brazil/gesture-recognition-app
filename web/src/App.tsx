@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useHandTracking } from './hooks/useHandTracking'
 import commands from '../../shared/command_list.json'
 import './App.css'
+import * as Ably from 'ably';
 
 interface Message { cmd: string; id: string; ts: number; gesture: 'none'; confidence: 0 }
 function createMessage(cmd: string): Message {
   return { cmd, id: crypto.randomUUID(), ts: Date.now(), gesture: 'none', confidence: 0 }
 }
+
+const CHANNEL_NAME = 'slideshow:main';
 
 const slides = [
   ['THE IDEA', 'Present with a little more freedom.', 'A hands-free presentation experience, built by AI Club.'],
@@ -17,6 +20,35 @@ const slides = [
 const labels: Record<string, string> = { NEXT: 'Next slide →', PREV: '← Previous slide', FIRST: '⇤ First slide', LAST: 'Last slide ⇥', BLACK_SCREEN: '◐ Toggle black screen' }
 
 export default function App() {
+  const [AblyStatus, setAblyStatus] = useState<string>('initialized');
+  const channelRef = useRef<Ably.RealtimeChannel | null>(null);
+
+  // Connect to Ably once on startup
+  useEffect(() => {
+    const key = import.meta.env.ABLY_API_KEY
+    if (!key) {
+      console.error('ABLY_API_KEY is missing. Check your .env and the envPrefix in vite.config.js.')
+      setAblyStatus('failed')
+      return
+    }
+
+    const client = new Ably.Realtime({ key, clientId: 'camera-web-app' })
+    client.connection.on(change => setAblyStatus(change.current))
+    channelRef.current = client.channels.get(CHANNEL_NAME)
+
+    return () => {
+      channelRef.current = null
+      client.close()
+    }
+  }, [])
+
+  // Publishes the full message object to the presenter client
+  function publishMessage(message: Message) {
+    channelRef.current?.publish('command', message).catch(err =>
+      console.error('Ably publish failed:', err)
+    )
+  }
+
   const { videoRef, canvasRef, status, error, hands, fps, start, stop } = useHandTracking();
 // hand.features is a 63-number vector, normalized for position, scale, and handedness. See shared/normalizeHand.ts for details.
 
@@ -28,13 +60,14 @@ export default function App() {
   const loading = status === 'loading'
   function handleCommand(cmd: string) {
     const payload = createMessage(cmd)
+    publishMessage(payload)
     setLogs(previous => [payload, ...previous].slice(0, 30))
     if (cmd === 'BLACK_SCREEN') setBlack(value => !value)
     else setSlide(value => cmd === 'NEXT' ? Math.min(3, value + 1) : cmd === 'PREV' ? Math.max(0, value - 1) : cmd === 'FIRST' ? 0 : 3)
   }
   return <main>
     <header><a className="brand" href="#"><b>✳</b> gesture <span>/ studio</span></a><span className="badge">● AI CLUB · WEB LAB</span></header>
-    <section className="intro"><div><p className="eyebrow">LESS CLICKING. MORE CONNECTING.</p><h1>Take the stage.</h1><p className="subtitle">Explore live hand tracking and test your presentation controls.</p></div><div className="mode">● Local demo<small>Commands stay in this browser</small></div></section>
+    <section className="intro"><div><p className="eyebrow">LESS CLICKING. MORE CONNECTING.</p><h1>Take the stage.</h1><p className="subtitle">Explore live hand tracking and test your presentation controls.</p></div><div className="mode">● {AblyStatus === 'connected' ? 'Relay connected' : `Relay ${AblyStatus}`}<small>Channel {CHANNEL_NAME}</small></div></section>
     <div className="workspace">
       <section className="panel" aria-labelledby="camera-title">
         <div className="panel-heading"><div><span className="number">01</span><h2 id="camera-title">Camera & tracking</h2></div><span className="status">{loading ? 'Starting…' : active ? '● Live' : 'Camera off'}</span></div>
@@ -43,9 +76,9 @@ export default function App() {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="metrics" aria-live="polite"><div><span>HANDS DETECTED</span><strong>{hands}<small> / 2</small></strong></div><div><span>TRACKING RATE</span><strong>{fps}<small> fps</small></strong></div><div><span>LANDMARKS</span><strong>{hands * 21}<small> points</small></strong></div></div><p className="privacy">◈ Video is processed on your device. No frames are uploaded.</p>
       </section>
-      <section className="panel" aria-labelledby="controls-title"><div className="panel-heading"><div><span className="number">02</span><h2 id="controls-title">Command simulator</h2></div><span className="status">Manual</span></div><p className="description">Try the controls on this sample deck. Each click creates a command in the activity log.</p>
+      <section className="panel" aria-labelledby="controls-title"><div className="panel-heading"><div><span className="number">02</span><h2 id="controls-title">Command simulator</h2></div><span className="status">Manual</span></div><p className="description">Try the controls on this sample deck. Each click creates a command in the activity log and sends it to the presenter client.</p>
         <div className={`slide-preview ${black ? 'blacked' : ''}`} aria-live="polite">{black ? <p>Black screen enabled</p> : <><span className="slide-tag">{slides[slide][0]}</span><h3>{slides[slide][1]}</h3><p>{slides[slide][2]}</p><span className="decoration" aria-hidden="true">✳</span></>}</div><div className="slide-position"><span>SAMPLE PRESENTATION</span><span>0{slide + 1} / 04</span></div>
-        <div className="command-grid">{commands.commands.map(command => <button key={command.name} className={command.name === 'BLACK_SCREEN' ? 'wide' : ''} onClick={() => handleCommand(command.name)} aria-pressed={command.name === 'BLACK_SCREEN' ? black : undefined}>{labels[command.name]}</button>)}</div><div className="integration-note"><span>○</span><div><strong>Gesture classifier · upcoming</strong><p>Hand tracking is live. Automatic gestures and the Ably relay will connect in the next stage.</p></div></div>
+        <div className="command-grid">{commands.commands.map(command => <button key={command.name} className={command.name === 'BLACK_SCREEN' ? 'wide' : ''} onClick={() => handleCommand(command.name)} aria-pressed={command.name === 'BLACK_SCREEN' ? black : undefined}>{labels[command.name]}</button>)}</div><div className="integration-note"><span>○</span><div><strong>Gesture classifier · upcoming</strong><p>Hand tracking and the Ably relay are live. Automatic gestures will connect in the next stage.</p></div></div>
       </section>
     </div>
     <section className="panel activity" aria-labelledby="activity-title"><div className="panel-heading"><div><span className="number">03</span><h2 id="activity-title">Activity log</h2><span className="count">{logs.length}</span></div><button className="text-button" disabled={!logs.length} onClick={() => setLogs([])}>Clear log</button></div><p className="log-help">Manual test messages use gesture “none” and confidence 0. Latest 30 commands are kept in memory.</p>{logs.length ? <div className="log-list">{logs.map(payload => <details key={payload.id}><summary><span className="log-command">{payload.cmd}</span><span className="log-source">Manual simulation</span><time>{new Date(payload.ts).toLocaleTimeString()}</time><span>⌄</span></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>)}</div> : <div className="empty-log"><span>↳</span><p>Your commands will appear here.<small>Try “Next slide” to see the shared message format in action.</small></p></div>}</section>
