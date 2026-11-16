@@ -79,3 +79,34 @@ footer>span:last-child { letter-spacing: 0; font-weight: 400; font-size: 10px; }
 @media(max-width: 900px) { main { padding: 0 24px; } .workspace { grid-template-columns: 1fr 1fr; gap: 16px; } .panel-heading, .camera-actions { padding-inline: 18px; } .metrics { margin-inline: 18px; } .metrics div+div { padding-left: 12px; } .slide-preview { padding: 22px; } }
 @media(max-width: 720px) { .workspace { grid-template-columns: 1fr; } .intro { padding-top: 32px; align-items: start; } .mode { display: none; } header { height: 76px; } .brand { font-size: 20px; } .badge { font-size: 8px; letter-spacing: .6px; } .slide-preview { aspect-ratio: 1.8; } .slide-preview h3 { font-size: 32px; } footer { flex-wrap: wrap; } }
 @media(max-width: 400px) { main { padding: 0 14px; } .badge { display: none; } .log-source { display: none; } .camera-actions { gap: 8px; } .primary { min-width: 130px; } }
+
+/* Workspace controls share the camera's visual language. */
+.workspace-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.mode-switcher { display: flex; padding: 4px; border: 1px solid #dce2d2; border-radius: 9px; background: #eaf0e1; gap: 4px; }
+.mode-switcher button { border: 0; border-radius: 5px; padding: 10px 18px; background: transparent; color: #506442; font-size: 12px; }
+.mode-switcher button[aria-pressed=true] { background: #fff; box-shadow: 0 1px 4px #23331e15; color: #26371d; font-weight: 600; }
+.secondary { border: 1px solid #d6dec9; border-radius: 7px; padding: 10px 14px; background: #fff; color: #455937; font-size: 12px; }
+.secondary:hover:not(:disabled) { background: #eef4e6; }
+.present-workspace { grid-template-columns: minmax(0, 1fr); max-width: 900px; margin-inline: auto; }
+.mode-hint { font-size: 12px; line-height: 1.7; margin-bottom: 20px; color: #617353; }
+.settings-panel { margin-bottom: 22px; }
+.mapping-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; padding: 22px 24px; }
+.field-label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: #526647; }
+select { width: 100%; min-width: 0; font: inherit; font-size: 12px; color: #2e4025; border: 1px solid #d6dec9; background: white; padding: 11px 30px 11px 10px; border-radius: 6px; }
+select:focus-visible { outline: 3px solid #678f35; outline-offset: 2px; }
+select:disabled { opacity: .65; }
+.settings-status { margin: 0 24px 20px; font-size: 11px; color: #647c4b; }
+.collection-fields { display: grid; gap: 16px; padding: 20px 24px; }
+.collection-progress { margin: 0 24px 20px; }
+.collection-progress>div { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.collection-progress strong { font-size: 30px; font-weight: 500; }
+.collection-progress small, .collection-progress span { font-size: 12px; color: #687e56; }
+progress { width: 100%; height: 10px; accent-color: #719748; }
+.collection-actions, .export-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 24px; }
+.collection-message { min-height: 60px; padding: 14px 24px; font-size: 12px; line-height: 1.6; color: #506b39; }
+.collection-tip { background: #f3f6ed; border-radius: 6px; margin: 0 24px; padding: 12px; color: #617451; font-size: 11px; line-height: 1.7; }
+.label-counts { list-style: none; padding: 0 24px; margin: 18px 0; }
+.label-counts li { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #edf0e7; font-size: 11px; color: #556b45; }
+.label-counts strong { font-weight: 500; }
+.collection-footnote { padding: 16px 24px 22px; color: #6a7e58; font-size: 11px; line-height: 1.7; }
+@media(max-width: 480px) { .workspace-toolbar { flex-wrap: wrap; } .mode-switcher { width: 100%; } .mode-switcher button { flex: 1; padding-inline: 10px; } .workspace-toolbar>.secondary { width: 100%; } }

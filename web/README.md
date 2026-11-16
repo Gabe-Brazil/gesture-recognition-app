@@ -1,10 +1,10 @@
 # Gesture Studio web app
 
-A local demo of webcam hand tracking and presentation commands.
+Browser camera tracking, slideshow controls, and training-data collection.
 
 ## Run locally
 
-Use Node.js 22.12+ (or a newer supported LTS version).
+Use Node.js 22.18+ or a newer supported LTS version (the test runner uses built-in TypeScript support).
 
 ```sh
 cd web
@@ -12,38 +12,57 @@ npm ci
 npm run dev
 ```
 
-Open the localhost URL printed by Vite. Click **Start camera**, allow camera access, and hold one or two hands in view. **Stop camera** releases the camera and tracking model; **Cancel** also cleans up a pending start. The mirror setting changes the preview only.
+Open the localhost URL printed by Vite. Click **Start camera**, allow camera access, and hold one or two hands in view. **Stop camera** releases the camera and model; **Cancel** cleans up a pending start. Mirror preview only changes the display, not the collected coordinates.
 
-The first tracking session downloads the versioned MediaPipe WASM runtime from jsDelivr and the hand-landmarker model from Google storage. Internet access is required for those assets. Webcam frames are processed locally and are not uploaded. Use localhost or HTTPS; ordinary HTTP on a LAN address does not provide webcam access in most browsers.
+Tracking downloads the versioned MediaPipe WASM runtime from jsDelivr and the hand-landmarker model from Google storage. Internet access is required for those assets. Frames are processed locally. Use localhost or HTTPS for webcam access.
 
-## Demo flow
+The existing Ably integration reads `ABLY_API_KEY` from the repository-root `.env` and connects to `slideshow:main` on startup. Without that key the relay reports failure, but camera tracking, mappings, and collection still work. The existing Vite configuration exposes this key to the browser, so use only a restricted demo credential; do not publish a private server key or commit `.env`. Production authentication should use server-issued tokens.
 
-1. Start the camera and show hand landmark overlays.
-2. Point out the hand count, landmark count, and measured inference FPS.
-3. Use Next, Previous, First, and Last to control the sample deck.
-4. Toggle the black screen, then toggle it off.
-5. Expand an activity entry to inspect its JSON payload, then clear the log.
-6. Stop the camera and verify the browser camera indicator turns off.
+## Workspace modes
 
-The simulator uses commands from `../shared/command_list.json` and the fields documented in `../shared/message-format.md`. Manual messages have `gesture: "none"` and `confidence: 0`; they are not model predictions. The latest 30 messages are kept in memory and disappear on reload. Slide navigation clamps at the first and last slide.
+- **Demo:** camera and sample slideshow side by side. Manual controls update the sample slides and publish commands through the existing Ably relay.
+- **Present:** hides the right-side sample slideshow and expands the camera area. This mode does not start PowerPoint or Google Slides; the presenter client and a focused slideshow are still required. Automatic gesture detection remains pending the ML model.
+- **Collect data:** replaces the slideshow with a labeled sample recorder. Collection does not publish commands or send samples to Ably. Switching modes pauses recording but keeps collected samples in memory.
+
+## Gesture settings (step 3)
+
+Open **Gesture settings** to choose a command for every label from `shared/gesture_labels.json`. Options come from `shared/command_list.json`, plus **No command**. Changes save immediately under `gesture-studio.mappings.v1` in local storage. Restore defaults resets all mappings. Invalid saved commands are discarded; missing labels receive defaults. If storage is blocked, a visible warning explains that changes are temporary.
+
+Defaults: `none` → no command, `thumbs_up` / `swipe_right` → `NEXT`, `thumbs_down` / `swipe_left` → `PREV`.
+
+These mappings are configuration for the future classifier, not predictions. The future command handler can read `parseMappings(localStorage.getItem(MAPPING_STORAGE_KEY))` from `src/lib/gestureMappings.ts`. An empty command means no action. Manual simulator buttons retain their explicit commands.
+
+## Data collection (step 7)
+
+1. Choose **Collect data** and start the camera.
+2. Select a gesture label and which hand to collect. **Single visible hand** requires exactly one hand. Explicit Left/Right uses MediaPipe's handedness label, independent of display mirroring.
+3. Click **Record samples**. Hold the labeled pose or perform the full labeled movement; vary position, orientation, and distance naturally.
+4. The recorder samples at most 10 times per second and automatically stops at 100 samples for that label. No-hand, ambiguous, and invalid-vector frames are skipped. A recording keeps the same handedness; pause and resume to use the other hand.
+5. Pause to change labels or export. Each new recording gets its own ID. Samples remain when you change modes or stop the camera.
+6. Export **JSON** or **CSV**. Either download includes every collected label. Export before closing or reloading the tab; samples are held in memory, not local storage. An unload warning appears for unexported changes. **Clear this label** confirms before discarding that label's samples.
+
+For `none`, record a visible hand in neutral/unrelated poses. Empty frames cannot supply 63-value hand vectors and are not fabricated into zero samples.
+
+See [the training-data format](../shared/training-data-format.md) for fields and column ordering. Raw landmarks and frame timestamps are retained to support future sequence analysis: normalized features alone remove translation, so individual normalized frames do not capture the full motion of a swipe. Recording IDs identify takes, not people; train/test splitting should also account for participants and sessions when combining files.
 
 ## Implementation
 
-- `src/hooks/useHandTracking.ts`: camera lifecycle, MediaPipe model loading, landmark rendering, and metrics. Each start gets a session identifier so canceled or obsolete requests cannot activate tracking. Inference is capped at 30 Hz and metrics update twice per second.
-- `src/App.tsx`: dashboard, local sample deck, command generation, and log.
-- `src/App.css`: responsive desktop/mobile layout.
+- `src/hooks/useHandTracking.ts`: camera lifecycle and frame callbacks containing Gabe's normalized feature vectors.
+- `src/lib/collection.ts`: bounded recorder, sample validation, and JSON/CSV serialization.
+- `src/components/DataCollection.tsx`: label selection, progress, recording controls, and downloads.
+- `src/lib/gestureMappings.ts` and `src/components/GestureSettings.tsx`: defaults, validation, persistence, and mapping menu.
+- `src/App.tsx`: mode selection, recording lifecycle, sample deck, and existing relay integration.
 
-Hand tracking uses MediaPipe's pretrained hand-landmark model, not the team's gesture classifier. Automatic gesture-to-command mapping, ONNX inference, and Ably publishing are not implemented here. No API keys are required for this demo. The Python presenter client is unchanged.
+The trained ONNX classifier, confidence thresholds, consecutive-frame confirmation, and cooldown are future ML integration work. The existing normalizer and Python presenter client are unchanged.
 
-When updating `@mediapipe/tasks-vision`, update the matching WASM version in the tracking hook. Inference currently runs on the main thread; a worker is a future optimization for slower devices.
-
-## Checks
+## Verification
 
 ```sh
+npm test
 npm run build
 npm run lint
 ```
 
-Manual checks: allow/deny camera permission; cancel while loading; start/stop repeatedly; disconnect the camera; verify zero, one, and two hands; toggle mirroring; try all five commands; check slide boundaries; expand and clear logs; inspect a narrow mobile viewport.
+Tests cover recorder limits, pause/resume, invalid frames, hand selection, label isolation, export ordering, default mappings, and malformed storage.
 
-API reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker/web_js
+Manual checks: start/stop the camera; collect 100 valid samples; pause/resume; switch modes while recording; inspect both downloads; change mappings and reload; restore defaults; use a narrow phone viewport. Camera permissions and actual hand tracking require a camera-enabled browser.
