@@ -38,7 +38,7 @@ export function useHandTracking(onFrame?: (frame: FrameData) => void) {
   // Keep the latest callback in a ref: tick() is created once per start(), so it
   // would otherwise keep calling whatever callback existed at that moment.
   const onFrameRef = useRef(onFrame)
-  onFrameRef.current = onFrame
+  useEffect(() => { onFrameRef.current = onFrame }, [onFrame])
   const [status, setStatus] = useState<'idle' | 'loading' | 'live'>('idle')
   const [error, setError] = useState('')
   const [hands, setHands] = useState(0)

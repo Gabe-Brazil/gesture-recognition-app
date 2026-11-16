@@ -1,8 +1,13 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useHandTracking } from './hooks/useHandTracking'
 import commands from '../../shared/command_list.json'
 import './App.css'
 import * as Ably from 'ably';
+import { GestureSettings } from './components/GestureSettings'
+import { DataCollection } from './components/DataCollection'
+import { DataCollector } from './lib/collection'
+
+type AppMode = 'demo' | 'present' | 'collect'
 
 interface Message { cmd: string; id: string; ts: number; gesture: 'none'; confidence: 0 }
 function createMessage(cmd: string): Message {
@@ -20,7 +25,11 @@ const slides = [
 const labels: Record<string, string> = { NEXT: 'Next slide →', PREV: '← Previous slide', FIRST: '⇤ First slide', LAST: 'Last slide ⇥', BLACK_SCREEN: '◐ Toggle black screen' }
 
 export default function App() {
-  const [AblyStatus, setAblyStatus] = useState<string>('initialized');
+  const [mode, setMode] = useState<AppMode>('demo')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [collector] = useState(() => new DataCollector())
+  const collection = useSyncExternalStore(collector.subscribe, collector.getSnapshot)
+  const [AblyStatus, setAblyStatus] = useState<string>(() => import.meta.env.ABLY_API_KEY ? 'initialized' : 'failed');
   const channelRef = useRef<Ably.RealtimeChannel | null>(null);
 
   // Connect to Ably once on startup
@@ -28,7 +37,6 @@ export default function App() {
     const key = import.meta.env.ABLY_API_KEY
     if (!key) {
       console.error('ABLY_API_KEY is missing. Check your .env and the envPrefix in vite.config.js.')
-      setAblyStatus('failed')
       return
     }
 
@@ -49,8 +57,22 @@ export default function App() {
     )
   }
 
-  const { videoRef, canvasRef, status, error, hands, fps, start, stop } = useHandTracking();
+  const { videoRef, canvasRef, status, error, hands, fps, start, stop } = useHandTracking(collector.capture);
 // hand.features is a 63-number vector, normalized for position, scale, and handedness. See shared/normalizeHand.ts for details.
+
+  useEffect(() => {
+    if (status !== 'live') collector.stop('Camera stopped. Your samples are kept.')
+  }, [status, collector])
+  useEffect(() => {
+    if (!collection.dirty) return
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warnBeforeLeaving)
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving)
+  }, [collection.dirty])
+  function changeMode(next: AppMode) {
+    collector.stop('Recording paused after switching modes. Your samples are kept.')
+    setMode(next)
+  }
 
   const [logs, setLogs] = useState<Message[]>([])
   const [slide, setSlide] = useState(0)
@@ -59,6 +81,7 @@ export default function App() {
   const active = status === 'live'
   const loading = status === 'loading'
   function handleCommand(cmd: string) {
+    if (mode === 'collect') return
     const payload = createMessage(cmd)
     publishMessage(payload)
     setLogs(previous => [payload, ...previous].slice(0, 30))
@@ -68,18 +91,28 @@ export default function App() {
   return <main>
     <header><a className="brand" href="#"><b>✳</b> gesture <span>/ studio</span></a><span className="badge">● AI CLUB · WEB LAB</span></header>
     <section className="intro"><div><p className="eyebrow">LESS CLICKING. MORE CONNECTING.</p><h1>Take the stage.</h1><p className="subtitle">Explore live hand tracking and test your presentation controls.</p></div><div className="mode">● {AblyStatus === 'connected' ? 'Relay connected' : `Relay ${AblyStatus}`}<small>Channel {CHANNEL_NAME}</small></div></section>
-    <div className="workspace">
+    <div className="workspace-toolbar">
+      <nav className="mode-switcher" aria-label="Workspace mode">
+        {(['demo', 'present', 'collect'] as const).map(value => <button key={value} aria-pressed={mode === value} onClick={() => changeMode(value)}>{value === 'demo' ? 'Demo' : value === 'present' ? 'Present' : 'Collect data'}</button>)}
+      </nav>
+      <button className="secondary" aria-expanded={settingsOpen} aria-controls="gesture-settings" onClick={() => setSettingsOpen(value => !value)}>Gesture settings</button>
+    </div>
+    <div id="gesture-settings" hidden={!settingsOpen}><GestureSettings /></div>
+    {mode === 'present' && <p className="mode-hint">Present mode keeps the camera in focus and hides the sample slides. Automatic gesture commands will be available when the classifier is connected.</p>}
+    <div className={`workspace ${mode === 'present' ? 'present-workspace' : ''}`}>
+
       <section className="panel" aria-labelledby="camera-title">
         <div className="panel-heading"><div><span className="number">01</span><h2 id="camera-title">Camera & tracking</h2></div><span className="status">{loading ? 'Starting…' : active ? '● Live' : 'Camera off'}</span></div>
         <div className={`camera-stage ${mirror ? 'mirrored' : ''}`}><video ref={videoRef} autoPlay playsInline muted aria-label="Live webcam preview"/><canvas ref={canvasRef} aria-hidden="true"/>{!active && <div className="placeholder"><div className="camera-symbol">◎</div><h3>{loading ? 'Getting things ready' : 'Your next move starts here'}</h3><p>{loading ? 'Allow camera access while the tracker loads.' : 'Start your camera, then hold a hand in view.'}</p><span>UP TO 2 HANDS · 21 LANDMARKS EACH</span></div>}{active && <div className="camera-caption">● {hands ? 'Hand landmarks detected' : 'Hold a hand in view'}</div>}</div>
-        <div className="camera-actions"><button className="primary" onClick={loading || active ? stop : start}>{loading ? 'Cancel' : active ? 'Stop camera ■' : 'Start camera ↗'}</button><label><input type="checkbox" checked={mirror} onChange={event => setMirror(event.target.checked)}/> Mirror preview</label></div>
+        <div className="camera-actions"><button className="primary" onClick={() => { collector.stop('Camera stopped. Your samples are kept.'); if (loading || active) stop(); else void start() }}>{loading ? 'Cancel' : active ? 'Stop camera ■' : 'Start camera ↗'}</button><label><input type="checkbox" checked={mirror} onChange={event => setMirror(event.target.checked)}/> Mirror preview</label></div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="metrics" aria-live="polite"><div><span>HANDS DETECTED</span><strong>{hands}<small> / 2</small></strong></div><div><span>TRACKING RATE</span><strong>{fps}<small> fps</small></strong></div><div><span>LANDMARKS</span><strong>{hands * 21}<small> points</small></strong></div></div><p className="privacy">◈ Video is processed on your device. No frames are uploaded.</p>
       </section>
-      <section className="panel" aria-labelledby="controls-title"><div className="panel-heading"><div><span className="number">02</span><h2 id="controls-title">Command simulator</h2></div><span className="status">Manual</span></div><p className="description">Try the controls on this sample deck. Each click creates a command in the activity log and sends it to the presenter client.</p>
+      {mode === 'collect' && <DataCollection collector={collector} cameraReady={active} />}
+      {mode === 'demo' && <section className="panel" aria-labelledby="controls-title"><div className="panel-heading"><div><span className="number">02</span><h2 id="controls-title">Command simulator</h2></div><span className="status">Manual</span></div><p className="description">Try the controls on this sample deck. Each click creates a command in the activity log and sends it to the presenter client.</p>
         <div className={`slide-preview ${black ? 'blacked' : ''}`} aria-live="polite">{black ? <p>Black screen enabled</p> : <><span className="slide-tag">{slides[slide][0]}</span><h3>{slides[slide][1]}</h3><p>{slides[slide][2]}</p><span className="decoration" aria-hidden="true">✳</span></>}</div><div className="slide-position"><span>SAMPLE PRESENTATION</span><span>0{slide + 1} / 04</span></div>
         <div className="command-grid">{commands.commands.map(command => <button key={command.name} className={command.name === 'BLACK_SCREEN' ? 'wide' : ''} onClick={() => handleCommand(command.name)} aria-pressed={command.name === 'BLACK_SCREEN' ? black : undefined}>{labels[command.name]}</button>)}</div><div className="integration-note"><span>○</span><div><strong>Gesture classifier · upcoming</strong><p>Hand tracking and the Ably relay are live. Automatic gestures will connect in the next stage.</p></div></div>
-      </section>
+      </section>}
     </div>
     <section className="panel activity" aria-labelledby="activity-title"><div className="panel-heading"><div><span className="number">03</span><h2 id="activity-title">Activity log</h2><span className="count">{logs.length}</span></div><button className="text-button" disabled={!logs.length} onClick={() => setLogs([])}>Clear log</button></div><p className="log-help">Manual test messages use gesture “none” and confidence 0. Latest 30 commands are kept in memory.</p>{logs.length ? <div className="log-list">{logs.map(payload => <details key={payload.id}><summary><span className="log-command">{payload.cmd}</span><span className="log-source">Manual simulation</span><time>{new Date(payload.ts).toLocaleTimeString()}</time><span>⌄</span></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>)}</div> : <div className="empty-log"><span>↳</span><p>Your commands will appear here.<small>Try “Next slide” to see the shared message format in action.</small></p></div>}</section>
     <footer><span>GESTURE STUDIO / AI Club</span><span>Built for a more natural presentation.</span></footer>
